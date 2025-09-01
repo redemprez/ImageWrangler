@@ -59,15 +59,67 @@ class ImageProcessor(QThread):
         output_format = self.kwargs.get('format', 'JPEG')
         
         with Image.open(file_path) as img:
-            resized_img = img.resize((width, height), Image.Resampling.LANCZOS)
+            print(f"Original: {img.mode}, size: {img.size}")
             
-            if output_format.upper() == 'JPEG' and resized_img.mode in ('RGBA', 'LA'):
-                background = Image.new('RGB', resized_img.size, (255, 255, 255))
-                background.paste(resized_img, mask=resized_img.split()[-1] if resized_img.mode == 'RGBA' else None)
-                resized_img = background
+            # Convert to a standard format first before resizing
+            if img.mode in ('I;16', 'I', 'F'):
+                print(f"Converting {img.mode} to L")
+                try:
+                    if img.mode == 'I;16':
+                        # Convert I;16 to numpy array, scale down, then back to PIL
+                        import numpy as np
+                        img_array = np.array(img)
+                        # Scale from 16-bit (0-65535) to 8-bit (0-255)
+                        img_array = (img_array / 256).astype(np.uint8)
+                        img = Image.fromarray(img_array, mode='L')
+                    else:
+                        img = img.convert('L')
+                    print(f"After conversion: {img.mode}")
+                except Exception as e:
+                    print(f"Conversion error: {e}")
+                    # Fallback - convert to RGB directly
+                    img = img.convert('RGB')
+                    print(f"Fallback conversion to: {img.mode}")
+            
+            resized_img = img.resize((width, height), Image.Resampling.LANCZOS)
+            print(f"After resize: {resized_img.mode}, size: {resized_img.size}")
+            
+            # Convert to RGB for JPEG format
+            if output_format.upper() == 'JPEG':
+                if resized_img.mode in ('RGBA', 'LA', 'P'):
+                    if resized_img.mode == 'P':
+                        # Convert palette to RGBA first
+                        resized_img = resized_img.convert('RGBA')
+                    
+                    # Create white background for transparency
+                    background = Image.new('RGB', resized_img.size, (255, 255, 255))
+                    if resized_img.mode == 'RGBA':
+                        background.paste(resized_img, mask=resized_img.split()[-1])
+                    else:
+                        background.paste(resized_img)
+                    resized_img = background
+                elif resized_img.mode == 'L':
+                    # Convert grayscale to RGB
+                    resized_img = resized_img.convert('RGB')
+                elif resized_img.mode != 'RGB':
+                    resized_img = resized_img.convert('RGB')
             
             output_path = self._get_output_path(file_path, output_format)
-            resized_img.save(output_path, format=output_format.upper())
+            print(f"Final mode before save: {resized_img.mode}")
+            print(f"Saving to: {output_path}")
+            
+            # Save with appropriate parameters
+            save_kwargs = {'format': output_format.upper()}
+            if output_format.upper() == 'JPEG':
+                save_kwargs['quality'] = 95
+                save_kwargs['optimize'] = True
+            
+            try:
+                resized_img.save(output_path, **save_kwargs)
+                print(f"Successfully saved: {output_path}")
+            except Exception as e:
+                print(f"Error saving: {e}")
+                raise
             
     def _invert_image(self, file_path: str):
         output_format = self.kwargs.get('format', 'JPEG')
